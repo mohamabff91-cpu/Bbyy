@@ -5,7 +5,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>File Inspector</title>
-
 <style>
 *{box-sizing:border-box}
 body{
@@ -34,6 +33,7 @@ input{display:none}
 .file-info small{display:block;color:#aab6cb;margin-top:7px}
 .eye{background:#168d78}
 .delete{background:#c44455}
+.execute{background:#7655d9}
 .preview{
  width:65px;height:65px;object-fit:cover;
  border-radius:9px
@@ -42,7 +42,7 @@ input{display:none}
 #storage{
  background:#172b36;padding:12px;
  border-radius:10px;color:#8ed8ff;
- font-size:13px;margin:12px 0
+ font-size:13px;margin:12px 0;white-space:pre-line
 }
 #viewer{
  display:none;position:fixed;inset:0;
@@ -69,9 +69,7 @@ pre{
 
 <h2>🔍 File Inspector</h2>
 
-<div id="storage">
-⏳ در حال بررسی حافظه گوشی...
-</div>
+<div id="storage">⏳ در حال بررسی حافظه گوشی...</div>
 
 <div class="card">
 <h3>📷 تصاویر</h3>
@@ -116,8 +114,9 @@ let db;
 let images=[];
 let mainFile=null;
 let imageUrls=[];
+let openedUrls=[];
 
-// اتصال به حافظه دائمی گوشی
+// اتصال به حافظه
 function openDatabase(){
  return new Promise((resolve,reject)=>{
   const request=indexedDB.open(DB_NAME,DB_VERSION);
@@ -134,39 +133,34 @@ function openDatabase(){
  });
 }
 
-// عملیات ذخیره و بازیابی
 function dbOperation(mode,action,data){
  return new Promise((resolve,reject)=>{
   const tx=db.transaction(STORE,mode);
   const store=tx.objectStore(STORE);
   let request;
 
-  if(action==='getAll') request=store.getAll();
-  if(action==='put') request=store.put(data);
-  if(action==='delete') request=store.delete(data);
+  if(action==='getAll')request=store.getAll();
+  if(action==='put')request=store.put(data);
+  if(action==='delete')request=store.delete(data);
 
   tx.oncomplete=()=>resolve(request?.result);
   tx.onerror=()=>reject(tx.error);
   tx.onabort=()=>reject(tx.error);
  });
+
 }
 
-// راه اندازی برنامه
 async function initialize(){
  try{
   db=await openDatabase();
 
-  // درخواست اجازه نگهداری پایدار اطلاعات
   if(navigator.storage?.persist){
    try{await navigator.storage.persist();}catch(e){}
   }
 
   const saved=await dbOperation('readonly','getAll');
 
-  images=saved
-   .filter(x=>x.kind==='image')
-   .sort((a,b)=>a.lastModified-b.lastModified);
-
+  images=saved.filter(x=>x.kind==='image');
   mainFile=saved.find(x=>x.kind==='document')||null;
 
   renderImages();
@@ -175,7 +169,7 @@ async function initialize(){
 
  }catch(error){
   document.getElementById('storage').textContent=
-   'خطا در دسترسی به حافظه: '+error.message;
+  'خطا در حافظه: '+error.message;
  }
 }
 
@@ -187,11 +181,10 @@ function formatSize(bytes){
 
 function createID(){
  return crypto.randomUUID?
-  crypto.randomUUID():
-  Date.now()+'-'+Math.random();
+ crypto.randomUUID():Date.now()+'-'+Math.random();
 }
 
-// انتخاب تصاویر
+// بارگذاری تصاویر
 document.getElementById('images').addEventListener('change',async e=>{
  if(!db)return;
 
@@ -222,13 +215,13 @@ document.getElementById('images').addEventListener('change',async e=>{
   updateStorage();
 
  }catch(error){
-  alert('ذخیره تصویر انجام نشد. ممکن است حافظه کافی نباشد.');
+  alert('ذخیره تصویر انجام نشد. حافظه را بررسی کن.');
  }
 
  e.target.value='';
 });
 
-// انتخاب فایل
+// بارگذاری فایل
 document.getElementById('document').addEventListener('change',async e=>{
  const file=e.target.files[0];
  if(!file||!db)return;
@@ -244,31 +237,29 @@ document.getElementById('document').addEventListener('change',async e=>{
    blob:file
   };
 
-  // جایگزینی فایل قبلی
   if(mainFile){
    await dbOperation('readwrite','delete',mainFile.id);
   }
 
   await dbOperation('readwrite','put',record);
-
   mainFile=record;
+
   renderFile();
   updateStorage();
 
  }catch(error){
-  alert('ذخیره فایل انجام نشد. فضای ذخیره‌سازی را بررسی کن.');
+  alert('ذخیره فایل انجام نشد.');
  }
 
  e.target.value='';
 });
 
-// پاک کردن آدرس های موقت تصاویر
+// تصاویر
 function clearImageUrls(){
  imageUrls.forEach(url=>URL.revokeObjectURL(url));
  imageUrls=[];
 }
 
-// نمایش تصاویر
 function renderImages(){
  clearImageUrls();
 
@@ -288,10 +279,12 @@ function renderImages(){
 
   const info=document.createElement('div');
   info.className='file-info';
-  info.textContent=file.name;
+
+  // شماره گذاری تصاویر
+  info.textContent='عکس '+(index+1);
 
   const small=document.createElement('small');
-  small.textContent=formatSize(file.size);
+  small.textContent=file.name+' | '+formatSize(file.size);
   info.append(small);
 
   const eye=document.createElement('button');
@@ -306,6 +299,8 @@ function renderImages(){
   del.onclick=async()=>{
    await dbOperation('readwrite','delete',file.id);
    images.splice(index,1);
+
+   // شماره ها بعد از حذف دوباره تنظیم می شوند
    renderImages();
    updateStorage();
   };
@@ -315,7 +310,7 @@ function renderImages(){
  });
 }
 
-// نمایش فایل اصلی
+// نمایش فایل
 function renderFile(){
  const list=document.getElementById('fileList');
  list.replaceChildren();
@@ -330,13 +325,20 @@ function renderFile(){
  info.textContent=mainFile.name;
 
  const small=document.createElement('small');
- small.textContent=formatSize(mainFile.size)+' | '+(mainFile.type||'نوع ناشناخته');
+ small.textContent=formatSize(mainFile.size)+' | '+
+ (mainFile.type||'نوع ناشناخته');
  info.append(small);
 
  const eye=document.createElement('button');
  eye.className='eye';
  eye.textContent='👁️';
  eye.onclick=()=>inspectFile(mainFile);
+
+ // دکمه اجرای فایل
+ const execute=document.createElement('button');
+ execute.className='execute';
+ execute.textContent='▶ اجرا کن';
+ execute.onclick=()=>executeFile(mainFile);
 
  const del=document.createElement('button');
  del.className='delete';
@@ -349,14 +351,54 @@ function renderFile(){
   updateStorage();
  };
 
- div.append(info,eye,del);
+ div.append(info,eye,execute,del);
  list.append(div);
 }
 
-// نمایش میزان فضای ذخیره شده
+// اجرای فایل در زبانه جدید کروم
+function executeFile(file){
+
+ const ext=file.name.split('.').pop().toLowerCase();
+
+ const url=URL.createObjectURL(file.blob);
+ openedUrls.push(url);
+
+ // زبانه جدید را مستقیماً در کلیک کاربر باز می کنیم
+ const tab=window.open('about:blank','_blank');
+
+ if(!tab){
+  URL.revokeObjectURL(url);
+  openedUrls=openedUrls.filter(x=>x!==url);
+  alert('مرورگر اجازه باز کردن زبانه جدید را نداد. اجازه پنجره بازشو را فعال کن.');
+  return;
+ }
+
+ // فایل HTML در محیط محدود اجرا می شود
+ if(['html','htm','xhtml'].includes(ext)){
+
+  tab.document.title='اجرای فایل: '+file.name;
+
+  const frame=tab.document.createElement('iframe');
+  frame.sandbox='allow-scripts allow-forms allow-modals';
+  frame.style.cssText=
+   'width:100%;height:100%;border:0;position:fixed;inset:0';
+  frame.src=url;
+
+  tab.document.body.style.margin='0';
+  tab.document.body.appendChild(frame);
+
+  return;
+ }
+
+ // سایر فایل ها در کروم باز می شوند
+ tab.location.href=url;
+
+}
+
+// حافظه
 async function updateStorage(){
  const total=images.reduce((sum,f)=>sum+f.size,0)
-  +(mainFile?mainFile.size:0);
+ +(mainFile?mainFile.size:0);
 
  let extra='';
 
@@ -369,18 +411,17 @@ async function updateStorage(){
  }
 
  document.getElementById('storage').textContent=
-  '💾 حجم فایل‌های شما: '+formatSize(total)+
-  '\nتعداد تصاویر: '+images.length+' از ۵'+
-  '\nتعداد فایل اصلی: '+(mainFile?1:0)+' از ۱'+extra;
+ '💾 حجم فایل‌های شما: '+formatSize(total)+
+ '\nتعداد تصاویر: '+images.length+' از ۵'+
+ '\nتعداد فایل اصلی: '+(mainFile?1:0)+' از ۱'+extra;
 }
 
+// نمایش جزئیات
 function show(title,content){
  document.getElementById('viewerTitle').textContent=title;
-
  const area=document.getElementById('viewerContent');
  area.replaceChildren();
  area.append(content);
-
  document.getElementById('viewer').style.display='block';
 }
 
@@ -388,7 +429,6 @@ function closeViewer(){
  document.getElementById('viewer').style.display='none';
 }
 
-// بررسی تصویر
 async function inspectImage(file){
  const box=document.createElement('div');
 
@@ -412,12 +452,13 @@ async function inspectImage(file){
   '\nارتفاع: '+bitmap.height+' پیکسل';
 
   bitmap.close();
+
  }catch{
   info.textContent='اطلاعات تصویر قابل خواندن نیست.';
  }
 }
 
-// بررسی ساختار فایل
+// بررسی فایل
 async function inspectFile(file){
  const box=document.createElement('div');
  const info=document.createElement('pre');
@@ -446,7 +487,8 @@ async function inspectFile(file){
 
    info.textContent+=
    '\n\nمحتوای داخلی:\n'+text+
-   (file.size>1000000?'\nادامه فایل نمایش داده نشده است.':'');
+   (file.size>1000000?
+   '\nادامه فایل نمایش داده نشده است.':'');
   }
   else{
    const bytes=new Uint8Array(
@@ -458,7 +500,7 @@ async function inspectFile(file){
    for(let i=0;i<bytes.length;i++){
     hex+=bytes[i].toString(16).padStart(2,'0')+' ';
     ascii+=(bytes[i]>=32&&bytes[i]<=126)?
-     String.fromCharCode(bytes[i]):'.';
+    String.fromCharCode(bytes[i]):'.';
 
     if((i+1)%16===0){
      hex+='\n';
@@ -471,12 +513,20 @@ async function inspectFile(file){
    '\n\nنمایش متنی:\n'+ascii+
    '\n\nبرای استخراج کامل ساختار این فرمت، پردازشگر اختصاصی لازم است.';
   }
+
  }catch(error){
   info.textContent+=' \nخطا: '+error.message;
  }
 }
 
 initialize();
+
+// آزادسازی آدرس های موقت هنگام بسته شدن صفحه
+window.addEventListener('pagehide',()=>{
+ clearImageUrls();
+ openedUrls.forEach(url=>URL.revokeObjectURL(url));
+ openedUrls=[];
+});
 </script>
 </body>
 </html>
