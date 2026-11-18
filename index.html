@@ -5,11 +5,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>File Inspector</title>
+
 <style>
 *{box-sizing:border-box}
 body{
- margin:0;background:#10131c;color:#fff;
- font-family:Tahoma,Arial,sans-serif;padding:18px
+ margin:0;background:#10131c;color:white;
+ font-family:Tahoma,Arial;padding:18px
 }
 .container{max-width:850px;margin:auto}
 h2{text-align:center;color:#64a9ff}
@@ -27,16 +28,21 @@ input{display:none}
 .file{
  background:#252d3e;padding:12px;
  border-radius:10px;margin:10px 0;
- display:flex;align-items:center;gap:10px;
- flex-wrap:wrap
+ display:flex;align-items:center;gap:10px;flex-wrap:wrap
 }
 .file-info{flex:1;min-width:120px;overflow-wrap:anywhere}
 .file-info small{display:block;color:#aab6cb;margin-top:7px}
 .eye{background:#168d78}
 .delete{background:#c44455}
-img.preview{
+.preview{
  width:65px;height:65px;object-fit:cover;
  border-radius:9px
+}
+.muted{color:#aab6cb;font-size:13px}
+#storage{
+ background:#172b36;padding:12px;
+ border-radius:10px;color:#8ed8ff;
+ font-size:13px;margin:12px 0
 }
 #viewer{
  display:none;position:fixed;inset:0;
@@ -55,32 +61,42 @@ pre{
  color:#a9e6b0;max-height:55vh;overflow:auto
 }
 #viewer img{max-width:100%;max-height:400px}
-.muted{color:#aab6cb;font-size:13px}
 </style>
 </head>
+
 <body>
 <div class="container">
+
 <h2>🔍 File Inspector</h2>
 
+<div id="storage">
+⏳ در حال بررسی حافظه گوشی...
+</div>
+
 <div class="card">
-<h3>📷 بارگذاری تصاویر</h3>
-<p class="muted">حداکثر ۵ تصویر انتخاب کنید.</p>
+<h3>📷 تصاویر</h3>
+<p class="muted">حداکثر ۵ تصویر قابل ذخیره است.</p>
+
 <label class="upload">
 انتخاب تصاویر +
 <input id="images" type="file" accept="image/*" multiple>
 </label>
+
 <div id="imageList"></div>
 </div>
 
 <div class="card">
-<h3>📁 بارگذاری فایل</h3>
-<p class="muted">فقط یک فایل می‌توانید انتخاب کنید.</p>
+<h3>📁 فایل اصلی</h3>
+<p class="muted">امکان ذخیره یک فایل با هر فرمتی.</p>
+
 <label class="upload">
 انتخاب فایل +
 <input id="document" type="file">
 </label>
+
 <div id="fileList"></div>
 </div>
+
 </div>
 
 <div id="viewer">
@@ -92,35 +108,76 @@ pre{
 </div>
 
 <script>
-const imagesInput=document.getElementById('images');
-const documentInput=document.getElementById('document');
-const imageList=document.getElementById('imageList');
-const fileList=document.getElementById('fileList');
+const DB_NAME='FileInspectorDB';
+const DB_VERSION=1;
+const STORE='files';
 
+let db;
 let images=[];
 let mainFile=null;
+let imageUrls=[];
 
-imagesInput.addEventListener('change',e=>{
- const selected=[...e.target.files];
- const remaining=5-images.length;
+// اتصال به حافظه دائمی گوشی
+function openDatabase(){
+ return new Promise((resolve,reject)=>{
+  const request=indexedDB.open(DB_NAME,DB_VERSION);
 
- if(selected.length>remaining){
-  alert('حداکثر ۵ تصویر مجاز است.');
- }
+  request.onupgradeneeded=()=>{
+   const database=request.result;
+   if(!database.objectStoreNames.contains(STORE)){
+    database.createObjectStore(STORE,{keyPath:'id'});
+   }
+  };
 
- selected.slice(0,remaining).forEach(file=>{
-  images.push(file);
+  request.onsuccess=()=>resolve(request.result);
+  request.onerror=()=>reject(request.error);
  });
- renderImages();
- imagesInput.value='';
-});
+}
 
-documentInput.addEventListener('change',e=>{
- const f=e.target.files[0];
- if(!f)return;
- mainFile=f;
- renderFile();
-});
+// عملیات ذخیره و بازیابی
+function dbOperation(mode,action,data){
+ return new Promise((resolve,reject)=>{
+  const tx=db.transaction(STORE,mode);
+  const store=tx.objectStore(STORE);
+  let request;
+
+  if(action==='getAll') request=store.getAll();
+  if(action==='put') request=store.put(data);
+  if(action==='delete') request=store.delete(data);
+
+  tx.oncomplete=()=>resolve(request?.result);
+  tx.onerror=()=>reject(tx.error);
+  tx.onabort=()=>reject(tx.error);
+ });
+}
+
+// راه اندازی برنامه
+async function initialize(){
+ try{
+  db=await openDatabase();
+
+  // درخواست اجازه نگهداری پایدار اطلاعات
+  if(navigator.storage?.persist){
+   try{await navigator.storage.persist();}catch(e){}
+  }
+
+  const saved=await dbOperation('readonly','getAll');
+
+  images=saved
+   .filter(x=>x.kind==='image')
+   .sort((a,b)=>a.lastModified-b.lastModified);
+
+  mainFile=saved.find(x=>x.kind==='document')||null;
+
+  renderImages();
+  renderFile();
+  updateStorage();
+
+ }catch(error){
+  document.getElementById('storage').textContent=
+   'خطا در دسترسی به حافظه: '+error.message;
+ }
+}
 
 function formatSize(bytes){
  if(bytes<1024)return bytes+' B';
@@ -128,12 +185,102 @@ function formatSize(bytes){
  return (bytes/1048576).toFixed(2)+' MB';
 }
 
+function createID(){
+ return crypto.randomUUID?
+  crypto.randomUUID():
+  Date.now()+'-'+Math.random();
+}
+
+// انتخاب تصاویر
+document.getElementById('images').addEventListener('change',async e=>{
+ if(!db)return;
+
+ const selected=[...e.target.files];
+ const remaining=5-images.length;
+
+ if(selected.length>remaining){
+  alert('حداکثر ۵ تصویر مجاز است.');
+ }
+
+ try{
+  for(const file of selected.slice(0,remaining)){
+   const record={
+    id:createID(),
+    name:file.name,
+    type:file.type,
+    size:file.size,
+    lastModified:file.lastModified,
+    kind:'image',
+    blob:file
+   };
+
+   await dbOperation('readwrite','put',record);
+   images.push(record);
+  }
+
+  renderImages();
+  updateStorage();
+
+ }catch(error){
+  alert('ذخیره تصویر انجام نشد. ممکن است حافظه کافی نباشد.');
+ }
+
+ e.target.value='';
+});
+
+// انتخاب فایل
+document.getElementById('document').addEventListener('change',async e=>{
+ const file=e.target.files[0];
+ if(!file||!db)return;
+
+ try{
+  const record={
+   id:createID(),
+   name:file.name,
+   type:file.type,
+   size:file.size,
+   lastModified:file.lastModified,
+   kind:'document',
+   blob:file
+  };
+
+  // جایگزینی فایل قبلی
+  if(mainFile){
+   await dbOperation('readwrite','delete',mainFile.id);
+  }
+
+  await dbOperation('readwrite','put',record);
+
+  mainFile=record;
+  renderFile();
+  updateStorage();
+
+ }catch(error){
+  alert('ذخیره فایل انجام نشد. فضای ذخیره‌سازی را بررسی کن.');
+ }
+
+ e.target.value='';
+});
+
+// پاک کردن آدرس های موقت تصاویر
+function clearImageUrls(){
+ imageUrls.forEach(url=>URL.revokeObjectURL(url));
+ imageUrls=[];
+}
+
+// نمایش تصاویر
 function renderImages(){
- imageList.innerHTML='';
+ clearImageUrls();
+
+ const list=document.getElementById('imageList');
+ list.replaceChildren();
+
  images.forEach((file,index)=>{
-  const url=URL.createObjectURL(file);
   const div=document.createElement('div');
   div.className='file';
+
+  const url=URL.createObjectURL(file.blob);
+  imageUrls.push(url);
 
   const img=document.createElement('img');
   img.src=url;
@@ -155,18 +302,24 @@ function renderImages(){
   const del=document.createElement('button');
   del.className='delete';
   del.textContent='حذف';
-  del.onclick=()=>{
+
+  del.onclick=async()=>{
+   await dbOperation('readwrite','delete',file.id);
    images.splice(index,1);
    renderImages();
+   updateStorage();
   };
 
   div.append(img,info,eye,del);
-  imageList.append(div);
+  list.append(div);
  });
 }
 
+// نمایش فایل اصلی
 function renderFile(){
- fileList.innerHTML='';
+ const list=document.getElementById('fileList');
+ list.replaceChildren();
+
  if(!mainFile)return;
 
  const div=document.createElement('div');
@@ -188,21 +341,46 @@ function renderFile(){
  const del=document.createElement('button');
  del.className='delete';
  del.textContent='حذف';
- del.onclick=()=>{
+
+ del.onclick=async()=>{
+  await dbOperation('readwrite','delete',mainFile.id);
   mainFile=null;
-  documentInput.value='';
   renderFile();
+  updateStorage();
  };
 
  div.append(info,eye,del);
- fileList.append(div);
+ list.append(div);
+}
+
+// نمایش میزان فضای ذخیره شده
+async function updateStorage(){
+ const total=images.reduce((sum,f)=>sum+f.size,0)
+  +(mainFile?mainFile.size:0);
+
+ let extra='';
+
+ if(navigator.storage?.estimate){
+  try{
+   const data=await navigator.storage.estimate();
+   extra='\nفضای استفاده شده سایت: '+formatSize(data.usage||0)+
+   '\nظرفیت تخمینی مرورگر: '+formatSize(data.quota||0);
+  }catch(e){}
+ }
+
+ document.getElementById('storage').textContent=
+  '💾 حجم فایل‌های شما: '+formatSize(total)+
+  '\nتعداد تصاویر: '+images.length+' از ۵'+
+  '\nتعداد فایل اصلی: '+(mainFile?1:0)+' از ۱'+extra;
 }
 
 function show(title,content){
  document.getElementById('viewerTitle').textContent=title;
+
  const area=document.getElementById('viewerContent');
  area.replaceChildren();
  area.append(content);
+
  document.getElementById('viewer').style.display='block';
 }
 
@@ -210,31 +388,36 @@ function closeViewer(){
  document.getElementById('viewer').style.display='none';
 }
 
+// بررسی تصویر
 async function inspectImage(file){
  const box=document.createElement('div');
+
  const img=document.createElement('img');
- img.src=URL.createObjectURL(file);
+ img.src=URL.createObjectURL(file.blob);
 
  const info=document.createElement('pre');
  info.textContent='در حال بررسی تصویر...';
+
  box.append(img,info);
  show('بررسی تصویر',box);
 
  try{
-  const bitmap=await createImageBitmap(file);
+  const bitmap=await createImageBitmap(file.blob);
+
   info.textContent=
   'نام: '+file.name+
-  '\nفرمت: '+(file.type||'ناشناخته')+
+  '\nفرمت: '+file.type+
   '\nحجم: '+formatSize(file.size)+
   '\nعرض: '+bitmap.width+' پیکسل'+
-  '\nارتفاع: '+bitmap.height+' پیکسل'+
-  '\nتاریخ آخرین تغییر: '+new Date(file.lastModified).toLocaleString('fa-IR');
+  '\nارتفاع: '+bitmap.height+' پیکسل';
+
   bitmap.close();
  }catch{
   info.textContent='اطلاعات تصویر قابل خواندن نیست.';
  }
 }
 
+// بررسی ساختار فایل
 async function inspectFile(file){
  const box=document.createElement('div');
  const info=document.createElement('pre');
@@ -243,8 +426,7 @@ async function inspectFile(file){
  'نام: '+file.name+
  '\nحجم: '+formatSize(file.size)+
  '\nنوع: '+(file.type||'ناشناخته')+
- '\nآخرین تغییر: '+new Date(file.lastModified).toLocaleString('fa-IR')+
- '\n\nدر حال بررسی محتوا...';
+ '\nدر حال بررسی محتوا...';
 
  box.append(info);
  show('ساختار داخلی فایل',box);
@@ -252,27 +434,31 @@ async function inspectFile(file){
  const ext=file.name.split('.').pop().toLowerCase();
 
  try{
-  if(['txt','json','html','htm','css','js','xml','md','csv','log','svg'].includes(ext)){
-   let text=await file.slice(0,1000000).text();
+  if(['txt','json','html','htm','css','js',
+  'xml','md','csv','log','svg'].includes(ext)){
+
+   let text=await file.blob.slice(0,1000000).text();
 
    if(ext==='json'){
     try{text=JSON.stringify(JSON.parse(text),null,2);}
     catch{}
    }
 
-   info.textContent=
-   'اطلاعات فایل:\n'+info.textContent+
+   info.textContent+=
    '\n\nمحتوای داخلی:\n'+text+
-   (file.size>1000000?'\n\nادامه فایل نمایش داده نشده است.':'');
+   (file.size>1000000?'\nادامه فایل نمایش داده نشده است.':'');
   }
   else{
-   const bytes=new Uint8Array(await file.slice(0,512).arrayBuffer());
+   const bytes=new Uint8Array(
+    await file.blob.slice(0,512).arrayBuffer()
+   );
+
    let hex='',ascii='';
 
    for(let i=0;i<bytes.length;i++){
     hex+=bytes[i].toString(16).padStart(2,'0')+' ';
     ascii+=(bytes[i]>=32&&bytes[i]<=126)?
-      String.fromCharCode(bytes[i]):'.';
+     String.fromCharCode(bytes[i]):'.';
 
     if((i+1)%16===0){
      hex+='\n';
@@ -280,16 +466,17 @@ async function inspectFile(file){
     }
    }
 
-   info.textContent=
-   'اطلاعات فایل:\n'+info.textContent+
-   '\n\nنمایش باینری (HEX):\n'+hex+
-   '\n\nنمایش متنی باینری:\n'+ascii+
-   '\n\nبرای تحلیل کامل این فرمت، پردازشگر اختصاصی لازم است.';
+   info.textContent+=
+   '\n\nنمایش باینری HEX:\n'+hex+
+   '\n\nنمایش متنی:\n'+ascii+
+   '\n\nبرای استخراج کامل ساختار این فرمت، پردازشگر اختصاصی لازم است.';
   }
  }catch(error){
-  info.textContent+=' \n\nخطا در خواندن فایل: '+error.message;
+  info.textContent+=' \nخطا: '+error.message;
  }
 }
+
+initialize();
 </script>
 </body>
 </html>
