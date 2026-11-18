@@ -1,0 +1,295 @@
+
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>File Inspector</title>
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;background:#10131c;color:#fff;
+ font-family:Tahoma,Arial,sans-serif;padding:18px
+}
+.container{max-width:850px;margin:auto}
+h2{text-align:center;color:#64a9ff}
+.card{
+ background:#1b2130;border:1px solid #30394c;
+ border-radius:15px;padding:16px;margin:15px 0
+}
+button,.upload{
+ border:0;border-radius:9px;padding:11px 15px;
+ background:#2878ed;color:white;cursor:pointer;
+ font-size:14px
+}
+.upload{display:inline-block;margin:5px}
+input{display:none}
+.file{
+ background:#252d3e;padding:12px;
+ border-radius:10px;margin:10px 0;
+ display:flex;align-items:center;gap:10px;
+ flex-wrap:wrap
+}
+.file-info{flex:1;min-width:120px;overflow-wrap:anywhere}
+.file-info small{display:block;color:#aab6cb;margin-top:7px}
+.eye{background:#168d78}
+.delete{background:#c44455}
+img.preview{
+ width:65px;height:65px;object-fit:cover;
+ border-radius:9px
+}
+#viewer{
+ display:none;position:fixed;inset:0;
+ background:#080b11ee;z-index:5;
+ padding:15px;overflow:auto
+}
+.modal{
+ max-width:800px;margin:30px auto;
+ background:#1b2130;border:1px solid #3d4b63;
+ border-radius:15px;padding:18px
+}
+pre{
+ direction:ltr;text-align:left;white-space:pre-wrap;
+ overflow-wrap:anywhere;background:#0d111a;
+ padding:15px;border-radius:10px;
+ color:#a9e6b0;max-height:55vh;overflow:auto
+}
+#viewer img{max-width:100%;max-height:400px}
+.muted{color:#aab6cb;font-size:13px}
+</style>
+</head>
+<body>
+<div class="container">
+<h2>🔍 File Inspector</h2>
+
+<div class="card">
+<h3>📷 بارگذاری تصاویر</h3>
+<p class="muted">حداکثر ۵ تصویر انتخاب کنید.</p>
+<label class="upload">
+انتخاب تصاویر +
+<input id="images" type="file" accept="image/*" multiple>
+</label>
+<div id="imageList"></div>
+</div>
+
+<div class="card">
+<h3>📁 بارگذاری فایل</h3>
+<p class="muted">فقط یک فایل می‌توانید انتخاب کنید.</p>
+<label class="upload">
+انتخاب فایل +
+<input id="document" type="file">
+</label>
+<div id="fileList"></div>
+</div>
+</div>
+
+<div id="viewer">
+<div class="modal">
+<h3 id="viewerTitle">بررسی فایل</h3>
+<div id="viewerContent"></div>
+<button onclick="closeViewer()">بستن</button>
+</div>
+</div>
+
+<script>
+const imagesInput=document.getElementById('images');
+const documentInput=document.getElementById('document');
+const imageList=document.getElementById('imageList');
+const fileList=document.getElementById('fileList');
+
+let images=[];
+let mainFile=null;
+
+imagesInput.addEventListener('change',e=>{
+ const selected=[...e.target.files];
+ const remaining=5-images.length;
+
+ if(selected.length>remaining){
+  alert('حداکثر ۵ تصویر مجاز است.');
+ }
+
+ selected.slice(0,remaining).forEach(file=>{
+  images.push(file);
+ });
+ renderImages();
+ imagesInput.value='';
+});
+
+documentInput.addEventListener('change',e=>{
+ const f=e.target.files[0];
+ if(!f)return;
+ mainFile=f;
+ renderFile();
+});
+
+function formatSize(bytes){
+ if(bytes<1024)return bytes+' B';
+ if(bytes<1048576)return (bytes/1024).toFixed(2)+' KB';
+ return (bytes/1048576).toFixed(2)+' MB';
+}
+
+function renderImages(){
+ imageList.innerHTML='';
+ images.forEach((file,index)=>{
+  const url=URL.createObjectURL(file);
+  const div=document.createElement('div');
+  div.className='file';
+
+  const img=document.createElement('img');
+  img.src=url;
+  img.className='preview';
+
+  const info=document.createElement('div');
+  info.className='file-info';
+  info.textContent=file.name;
+
+  const small=document.createElement('small');
+  small.textContent=formatSize(file.size);
+  info.append(small);
+
+  const eye=document.createElement('button');
+  eye.className='eye';
+  eye.textContent='👁️';
+  eye.onclick=()=>inspectImage(file);
+
+  const del=document.createElement('button');
+  del.className='delete';
+  del.textContent='حذف';
+  del.onclick=()=>{
+   images.splice(index,1);
+   renderImages();
+  };
+
+  div.append(img,info,eye,del);
+  imageList.append(div);
+ });
+}
+
+function renderFile(){
+ fileList.innerHTML='';
+ if(!mainFile)return;
+
+ const div=document.createElement('div');
+ div.className='file';
+
+ const info=document.createElement('div');
+ info.className='file-info';
+ info.textContent=mainFile.name;
+
+ const small=document.createElement('small');
+ small.textContent=formatSize(mainFile.size)+' | '+(mainFile.type||'نوع ناشناخته');
+ info.append(small);
+
+ const eye=document.createElement('button');
+ eye.className='eye';
+ eye.textContent='👁️';
+ eye.onclick=()=>inspectFile(mainFile);
+
+ const del=document.createElement('button');
+ del.className='delete';
+ del.textContent='حذف';
+ del.onclick=()=>{
+  mainFile=null;
+  documentInput.value='';
+  renderFile();
+ };
+
+ div.append(info,eye,del);
+ fileList.append(div);
+}
+
+function show(title,content){
+ document.getElementById('viewerTitle').textContent=title;
+ const area=document.getElementById('viewerContent');
+ area.replaceChildren();
+ area.append(content);
+ document.getElementById('viewer').style.display='block';
+}
+
+function closeViewer(){
+ document.getElementById('viewer').style.display='none';
+}
+
+async function inspectImage(file){
+ const box=document.createElement('div');
+ const img=document.createElement('img');
+ img.src=URL.createObjectURL(file);
+
+ const info=document.createElement('pre');
+ info.textContent='در حال بررسی تصویر...';
+ box.append(img,info);
+ show('بررسی تصویر',box);
+
+ try{
+  const bitmap=await createImageBitmap(file);
+  info.textContent=
+  'نام: '+file.name+
+  '\nفرمت: '+(file.type||'ناشناخته')+
+  '\nحجم: '+formatSize(file.size)+
+  '\nعرض: '+bitmap.width+' پیکسل'+
+  '\nارتفاع: '+bitmap.height+' پیکسل'+
+  '\nتاریخ آخرین تغییر: '+new Date(file.lastModified).toLocaleString('fa-IR');
+  bitmap.close();
+ }catch{
+  info.textContent='اطلاعات تصویر قابل خواندن نیست.';
+ }
+}
+
+async function inspectFile(file){
+ const box=document.createElement('div');
+ const info=document.createElement('pre');
+
+ info.textContent=
+ 'نام: '+file.name+
+ '\nحجم: '+formatSize(file.size)+
+ '\nنوع: '+(file.type||'ناشناخته')+
+ '\nآخرین تغییر: '+new Date(file.lastModified).toLocaleString('fa-IR')+
+ '\n\nدر حال بررسی محتوا...';
+
+ box.append(info);
+ show('ساختار داخلی فایل',box);
+
+ const ext=file.name.split('.').pop().toLowerCase();
+
+ try{
+  if(['txt','json','html','htm','css','js','xml','md','csv','log','svg'].includes(ext)){
+   let text=await file.slice(0,1000000).text();
+
+   if(ext==='json'){
+    try{text=JSON.stringify(JSON.parse(text),null,2);}
+    catch{}
+   }
+
+   info.textContent=
+   'اطلاعات فایل:\n'+info.textContent+
+   '\n\nمحتوای داخلی:\n'+text+
+   (file.size>1000000?'\n\nادامه فایل نمایش داده نشده است.':'');
+  }
+  else{
+   const bytes=new Uint8Array(await file.slice(0,512).arrayBuffer());
+   let hex='',ascii='';
+
+   for(let i=0;i<bytes.length;i++){
+    hex+=bytes[i].toString(16).padStart(2,'0')+' ';
+    ascii+=(bytes[i]>=32&&bytes[i]<=126)?
+      String.fromCharCode(bytes[i]):'.';
+
+    if((i+1)%16===0){
+     hex+='\n';
+     ascii+='\n';
+    }
+   }
+
+   info.textContent=
+   'اطلاعات فایل:\n'+info.textContent+
+   '\n\nنمایش باینری (HEX):\n'+hex+
+   '\n\nنمایش متنی باینری:\n'+ascii+
+   '\n\nبرای تحلیل کامل این فرمت، پردازشگر اختصاصی لازم است.';
+  }
+ }catch(error){
+  info.textContent+=' \n\nخطا در خواندن فایل: '+error.message;
+ }
+}
+</script>
+</body>
+</html>
